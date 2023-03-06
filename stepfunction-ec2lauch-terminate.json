@@ -1,0 +1,133 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "launch-ec2-instance",
+  "States": {
+    "launch-ec2-instance": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:1234567890:function:lauch-ec2-instance",
+      "ResultPath": "$.instanceresult",
+      "Next": "Wait"
+    },
+    "Wait": {
+      "Type": "Wait",
+      "Seconds": 300,
+      "Next": "startssmcommand"
+    },
+    "startssmcommand": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:1234567890:function:startssmcommand",
+      "ResultPath": "$.guid",
+      "Next": "Wait 15 Seconds"
+    },
+    "Wait 15 Seconds": {
+      "Type": "Wait",
+      "Next": "checkssmcmdstatus",
+      "Seconds": 15
+    },
+    "checkssmcmdstatus": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:1234567890:function:checkssmcmdstatus",
+      "Next": "Job Complete?",
+      "InputPath": "$.guid",
+      "ResultPath": "$.result"
+    },
+    "Job Complete?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.result.status",
+          "StringEquals": "Failed",
+          "Next": "terminate-ec2-instance"
+        },
+        {
+          "Variable": "$.result.status",
+          "StringEquals": "Cancelled",
+          "Next": "terminate-ec2-instance"
+        },
+        {
+          "Variable": "$.result.status",
+          "StringEquals": "Success",
+          "Next": "Get Final Job Status"
+        }
+      ],
+      "Default": "Wait 15 Seconds"
+    },
+    "terminate-ec2-instance": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "Payload.$": "$",
+        "FunctionName": "arn:aws:lambda:us-east-1:1234567890:function:terminate-ec2-instance:$LATEST"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "NotifyFailure"
+    },
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:1234567890:testemail",
+        "Message": "Step Function: EC2StartStop",
+        "Subject": "DB Refresh Failed"
+      },
+      "Next": "Job Failed"
+    },
+    "Job Failed": {
+      "Type": "Fail",
+      "Cause": "AWS Batch Job Failed",
+      "Error": "CJAMS DB Refresh Failed"
+    },
+    "Get Final Job Status": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:us-east-1:1234567890:function:checkssmcmdstatus",
+      "InputPath": "$.guid",
+      "Next": "terminate-ec2-instances"
+    },
+    "terminate-ec2-instances": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "Payload.$": "$",
+        "FunctionName": "arn:aws:lambda:us-east-1:1234567890:function:terminate-ec2-instance:$LATEST"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "NotifySuccess"
+    },
+    "NotifySuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:1234567890:testemail",
+        "Message": "Step Function: EC2StartStop",
+        "Subject": "DB Refresh Completed"
+      },
+      "End": true
+    }
+  }
+}
